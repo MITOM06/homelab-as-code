@@ -1,0 +1,41 @@
+# Remote desktop: XFCE (nhẹ) + xrdp → từ Mac mở app "Windows App", kết nối hp-lab.<your-tailnet>.ts.net:3389.
+# Cổng 3389 không cần mở thêm ở firewall: nftables chỉ nhận từ tailscale0, LAN dò vào vẫn bị drop.
+
+# install_recommends: false → KHÔNG kéo màn hình đăng nhập đồ hoạ (lightdm), không kéo snap.
+# Màn hình thật của HP vẫn là dòng lệnh; desktop chỉ chạy khi có người kết nối RDP.
+- name: Cài XFCE + xrdp
+  ansible.builtin.apt:
+    name: [xfce4, xfce4-terminal, xrdp, xorgxrdp, dbus-x11]
+    install_recommends: false
+    state: present
+
+# xrdp cần đọc khoá TLS tự ký trong /etc/ssl/private (thuộc nhóm ssl-cert)
+- name: Cho xrdp đọc khoá TLS
+  ansible.builtin.user:
+    name: xrdp
+    groups: ssl-cert
+    append: true
+  notify: Restart xrdp
+
+# Mặc định xrdp cho root đăng nhập; root ở đây không có mật khẩu nhưng chặn luôn cho chắc
+- name: Cấm root đăng nhập qua xrdp
+  ansible.builtin.lineinfile:
+    path: /etc/xrdp/sesman.ini
+    regexp: '^AllowRootLogin='
+    line: AllowRootLogin=false
+  notify: Restart xrdp
+
+# xrdp gọi /etc/X11/Xsession → đọc ~/.xsession → mở đúng XFCE
+- name: Phiên RDP của user lab mở XFCE
+  ansible.builtin.copy:
+    dest: "/home/{{ lab_user }}/.xsession"
+    content: "startxfce4\n"
+    owner: "{{ lab_user }}"
+    group: "{{ lab_user }}"
+    mode: "0644"
+
+- name: Bật xrdp
+  ansible.builtin.systemd_service:
+    name: xrdp
+    state: started
+    enabled: true

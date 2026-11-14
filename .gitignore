@@ -1,0 +1,6 @@
+# Không bao giờ commit: ISO (3GB), bản build (chứa secrets), secrets
+iso/
+build/
+secrets/
+*.retry
+.DS_Store

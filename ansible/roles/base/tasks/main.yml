@@ -1,0 +1,59 @@
+- name: Cập nhật toàn bộ gói
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: dist
+    autoremove: true
+
+- name: Gói cơ bản + công cụ chẩn đoán mạng
+  ansible.builtin.apt:
+    name: [curl, git, vim, tmux, jq, htop, tcpdump, dnsutils, mtr-tiny, unattended-upgrades]
+    state: present
+
+- name: Gỡ snapd (không dùng, tốn RAM)
+  ansible.builtin.apt:
+    name: snapd
+    state: absent
+    purge: true
+
+- name: Bật tự động cài bản vá bảo mật mỗi ngày
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    mode: "0644"
+
+# Ubuntu 26.04 không tạo sẵn các thư mục drop-in này
+- name: Thư mục drop-in cho systemd
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /etc/systemd/journald.conf.d
+    - /etc/systemd/logind.conf.d
+
+- name: Giới hạn log journald (SSD 240GB)
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/10-size.conf
+    content: |
+      [Journal]
+      SystemMaxUse=500M
+    mode: "0644"
+  notify: Restart journald
+
+- name: Laptop — gập nắp không sleep
+  ansible.builtin.copy:
+    dest: /etc/systemd/logind.conf.d/10-lid.conf
+    content: |
+      [Login]
+      HandleLidSwitch=ignore
+      HandleLidSwitchExternalPower=ignore
+      HandleLidSwitchDocked=ignore
+    mode: "0644"
+
+- name: Laptop — chặn mọi chế độ ngủ (máy lab điều khiển từ xa)
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    masked: true
+  loop: [sleep.target, suspend.target, hibernate.target, hybrid-sleep.target]

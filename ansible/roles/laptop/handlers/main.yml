@@ -1,0 +1,8 @@
+- name: Update grub
+  ansible.builtin.command: update-grub
+  changed_when: true
+
+# Gỡ ngay không cần reboot; module đang bận thì để reboot lo
+- name: Unload cam mic
+  ansible.builtin.shell: modprobe -r uvcvideo; modprobe -r snd_hda_intel; true
+  changed_when: true

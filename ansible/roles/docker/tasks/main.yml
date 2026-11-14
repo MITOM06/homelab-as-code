@@ -1,0 +1,27 @@
+- name: Cài Docker + compose
+  ansible.builtin.apt:
+    name: [docker.io, docker-compose-v2]
+    state: present
+
+# Bẫy kinh điển: port Docker publish (-p 8080:80) đi qua NAT/forward, KHÔNG qua chain input
+# → firewall ở trên không chặn được, container sẽ lộ ra cả mạng LAN.
+# "ip": "127.0.0.1" = mặc định chỉ bind localhost; muốn mở cho Air thì ghi rõ IP Tailscale khi chạy.
+- name: Cấu hình Docker daemon
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "ip": "127.0.0.1",
+        "log-driver": "json-file",
+        "log-opts": {"max-size": "10m", "max-file": "3"}
+      }
+    mode: "0644"
+  notify: Restart docker
+
+# ⚠️ Nhóm docker ≈ quyền root (ai trong nhóm này chạy được container mount cả "/").
+# Chấp nhận được vì đây là máy lab 1 người dùng.
+- name: Cho user lab dùng docker không cần sudo
+  ansible.builtin.user:
+    name: "{{ lab_user }}"
+    groups: docker
+    append: true

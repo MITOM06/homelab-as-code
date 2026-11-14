@@ -1,0 +1,20 @@
+# Cấu hình toàn bộ máy lab. Chạy lại bao nhiêu lần cũng được (idempotent).
+#   cd ansible && ansible-playbook site.yml --ask-become-pass
+#   Chạy thử không đổi gì:  ansible-playbook site.yml --check --diff --ask-become-pass
+- name: HP lab
+  hosts: hp-lab
+  become: true
+  vars:
+    # Đọc từ secrets/ trên Mac (git-ignored), không ghi vào repo
+    wifi_ssid: "{{ lookup('file', playbook_dir + '/../secrets/wifi_ssid') }}"
+    wifi_pass: "{{ lookup('file', playbook_dir + '/../secrets/wifi_pass') }}"
+  roles:
+    - cleanup     # xoá dấu vết secrets của quá trình cài (auth key, passphrase)
+    - base        # cập nhật, tự vá bảo mật, gói cơ bản, laptop không sleep
+    - ssh         # SSH chỉ nhận key, cấm root
+    - firewall    # chặn mọi kết nối vào trừ Tailscale
+    - docker      # môi trường lab bằng container; port publish mặc định chỉ bind 127.0.0.1
+    - wifi        # USB WiFi RTL8188EUS → rút dây LAN được
+    - desktop     # XFCE + xrdp: điều khiển màn hình HP từ Mac (Windows App), chỉ qua Tailscale
+    - laptop      # màn hình tự tắt + độ sáng 30%, locale, lm-sensors, tắt webcam + mic
+    - tui         # btop, mc, gping… + menu `lab`

@@ -1,0 +1,78 @@
+# Cài đặt phần cứng laptop: màn hình, nhiệt, locale, tắt webcam + mic.
+# (Chống ngủ / gập nắp đã nằm ở role base.)
+
+# Máy đặt trong góc, ít ai nhìn: màn hình console tự tắt sau 5 phút không bấm phím
+# → đỡ tốn điện, đỡ nóng, đỡ mòn đèn nền. Bấm phím bất kỳ là sáng lại. Cần reboot mới có hiệu lực.
+- name: Màn hình tự tắt sau 5 phút (tham số kernel consoleblank)
+  ansible.builtin.copy:
+    dest: /etc/default/grub.d/90-hp-lab.cfg
+    content: |
+      # Quản lý bởi hp-lab Ansible (role laptop)
+      GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT consoleblank=300"
+    mode: "0644"
+  notify: Update grub
+
+- name: Lệnh brightness (xem / đặt độ sáng)
+  ansible.builtin.copy:
+    src: brightness
+    dest: /usr/local/bin/brightness
+    mode: "0755"
+
+# systemd-backlight khôi phục độ sáng lần trước → chạy SAU nó để luôn về 30% khi khởi động
+- name: Độ sáng mặc định 30% khi khởi động
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/hp-brightness.service
+    content: |
+      [Unit]
+      Description=Đặt độ sáng màn hình HP về 30% (hp-lab)
+      After=systemd-backlight@backlight:intel_backlight.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/brightness 30
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+- name: Bật dịch vụ độ sáng
+  ansible.builtin.systemd_service:
+    name: hp-brightness
+    enabled: true
+    daemon_reload: true
+
+# Terminal của Mac gửi LC_CTYPE=UTF-8 qua SSH — Linux không có locale tên đó
+# → cảnh báo "Cannot set LC_CTYPE" và tên file tiếng Việt hiện sai trong mc/TUI.
+- name: Sửa LC_CTYPE do Mac gửi sang
+  ansible.builtin.copy:
+    dest: /etc/profile.d/10-mac-locale.sh
+    content: |
+      # Quản lý bởi hp-lab Ansible (role laptop): LC_CTYPE=UTF-8 của macOS → C.UTF-8
+      [ "$LC_CTYPE" = "UTF-8" ] && export LC_CTYPE=C.UTF-8
+    mode: "0644"
+
+- name: Locale tiếng Việt
+  ansible.builtin.shell: locale -a | grep -qix vi_VN.utf8 || { locale-gen vi_VN.UTF-8 && echo generated; }
+  register: vi_locale
+  changed_when: "'generated' in vi_locale.stdout"
+
+# Có cảm biến PCHZ luôn báo 114°C — giá trị ảo cố định của firmware HP, bỏ qua; xem "Package id 0".
+- name: Công cụ đo nhiệt độ (lệnh sensors)
+  ansible.builtin.apt:
+    name: lm-sensors
+    state: present
+
+# Máy lab là nơi thử tấn công: lỡ bị chiếm cũng không nhìn / nghe trộm được.
+# "install … /bin/false" chặn cả khi có gì đó gọi modprobe trực tiếp (blacklist thôi thì không).
+# Bật lại: xoá file này + reboot. snd_hda_intel = toàn bộ âm thanh (loa + mic) — lab không cần.
+- name: Tắt webcam + mic (chặn driver)
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/hp-lab-no-cam-mic.conf
+    content: |
+      # Quản lý bởi hp-lab Ansible (role laptop)
+      blacklist uvcvideo
+      install uvcvideo /bin/false
+      blacklist snd_hda_intel
+      install snd_hda_intel /bin/false
+    mode: "0644"
+  notify: Unload cam mic

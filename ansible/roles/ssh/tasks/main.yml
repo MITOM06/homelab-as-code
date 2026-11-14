@@ -1,0 +1,25 @@
+# sshd đọc /etc/ssh/sshd_config.d/*.conf TRƯỚC file chính và giá trị đầu tiên thắng
+# → drop-in này ghi đè được mặc định mà không phải sửa sshd_config gốc.
+- name: SSH hardening
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-hardening.conf
+    content: |
+      # Quản lý bởi hp-lab Ansible
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      AllowUsers {{ lab_user }}
+      MaxAuthTries 3
+      X11Forwarding no
+    mode: "0644"
+  notify: Check and restart ssh
+
+- name: Key được phép SSH vào lab (Mac Air + iPhone Termius)
+  ansible.builtin.lineinfile:
+    path: "/home/{{ lab_user }}/.ssh/authorized_keys"
+    line: "{{ item }}"
+    create: true
+    owner: "{{ lab_user }}"
+    group: "{{ lab_user }}"
+    mode: "0600"
+  loop: "{{ lab_ssh_keys }}"

@@ -1,0 +1,13 @@
+# Máy lab — truy cập qua Tailscale MagicDNS (không dùng IP LAN, không mở SSH ra LAN)
+all:
+  hosts:
+    hp-lab:
+      ansible_host: hp-lab.<your-tailnet>.ts.net
+      ansible_user: "{{ lab_user }}"
+  vars:
+    lab_user: labadmin   # phải trùng tên user nhập ở scripts/fill-secrets.sh
+    # Key được SSH vào lab (public key — an toàn khi nằm trong repo)
+    lab_ssh_keys:
+      - ssh-ed25519 AAAA...replace-with-your-public-key laptop
+      - ssh-ed25519 AAAA...replace-with-your-public-key phone
+      - ssh-ed25519 AAAA...replace-with-your-public-key server

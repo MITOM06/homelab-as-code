@@ -1,0 +1,31 @@
+#!/usr/sbin/nft -f
+# Quản lý bởi hp-lab Ansible.
+# KHÔNG dùng "flush ruleset": lệnh đó xoá luôn rule của Docker và Tailscale.
+# Chỉ quản lý đúng bảng riêng "hostfw": tạo (nếu chưa có) → xoá → dựng lại.
+table inet hostfw
+delete table inet hostfw
+
+table inet hostfw {
+  chain input {
+    type filter hook input priority filter; policy drop;   # mặc định: CHẶN mọi kết nối vào
+
+    iif "lo" accept
+    ct state established,related accept      # gói trả lời cho kết nối do máy này mở ra
+    ct state invalid drop
+
+    iifname "tailscale0" accept              # mọi thứ đi qua Tailscale (nguồn đã được ACL tailnet lọc)
+    udp dport 41641 accept                   # Tailscale kết nối P2P trực tiếp
+
+    # Dây USB-C nối thẳng Mac Air (cdc_ncm, tên enx…): đường cứu hộ khi mất WiFi/Tailscale.
+    # Chỉ SSH. Dây vật lý chỉ tới được Mac; máy đặt nơi chỉ chủ máy tiếp cận.
+    iifname "enx*" tcp dport 22 accept
+
+    # IPv6 cần NDP để hoạt động; DHCP để nhận IP
+    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert, nd-router-solicit } accept
+    udp sport 67 udp dport 68 accept
+    udp dport 546 accept
+    meta l4proto { icmp, ipv6-icmp } limit rate 5/second accept
+
+    # Còn lại (kể cả SSH từ mạng LAN) → rơi vào policy drop
+  }
+}

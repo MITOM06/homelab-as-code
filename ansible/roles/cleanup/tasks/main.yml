@@ -1,0 +1,85 @@
+# Installer và cloud-init để lại bản sao cấu hình có chứa auth key Tailscale / mật khẩu WiFi.
+# Cloud-init chỉ cần chạy 1 lần (lần boot đầu) → tắt luôn để không ai "tiêm" cấu hình qua nó.
+- name: Xoá các file cấu hình cài đặt có chứa secrets
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/log/installer/autoinstall-user-data
+    - /etc/cloud/cloud.cfg.d/99-installer.cfg
+    - /var/lib/cloud/instance/user-data.txt
+    - /var/lib/cloud/instance/user-data.txt.i
+
+- name: Tắt cloud-init sau lần boot đầu
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud-init.disabled
+    content: "Tắt bởi hp-lab Ansible — cloud-init chỉ dùng lúc cài\n"
+    mode: "0644"
+
+# Tailscale: bình thường cloud-init đã cài ở lần boot đầu. Nếu lúc đó máy chưa có mạng
+# (USB WiFi không nhận) thì cài ở đây; join tailnet thì làm tay 1 lần (cần auth key mới).
+- name: Kiểm tra Tailscale đã cài chưa
+  ansible.builtin.command: which tailscale
+  register: ts_bin
+  changed_when: false
+  failed_when: false
+
+- name: Cài Tailscale (khi lần boot đầu không có mạng)
+  ansible.builtin.shell: curl -fsSL https://tailscale.com/install.sh | sh
+  when: ts_bin.rc != 0
+
+# Phân vùng HPLABINST (sda4) chứa toàn bộ bộ cài + user-data có auth key và mật khẩu WiFi.
+# Cài xong không cần nữa: xoá sạch rồi nới LVM ra hết ổ.
+- name: Công cụ phân vùng
+  ansible.builtin.apt:
+    name: [gdisk, cloud-guest-utils]
+    state: present
+
+- name: Tìm phân vùng HPLABINST
+  ansible.builtin.command: blkid -L HPLABINST
+  register: inst
+  changed_when: false
+  failed_when: false
+
+- name: Xoá HPLABINST và nới LVM ra hết ổ
+  when: inst.rc == 0
+  block:
+    - name: Chỉ xoá khi HPLABINST đúng là /dev/sda4
+      ansible.builtin.assert:
+        that: inst.stdout == '/dev/sda4'
+        fail_msg: "HPLABINST nằm ở {{ inst.stdout }}, không phải /dev/sda4 — dừng, kiểm tra tay"
+
+    - name: Xoá nội dung (TRIM; SSD không hỗ trợ thì ghi 0) rồi xoá phân vùng 4
+      ansible.builtin.shell: |
+        set -e
+        umount /dev/sda4 2>/dev/null || true
+        blkdiscard -f /dev/sda4 || dd if=/dev/zero of=/dev/sda4 bs=4M status=none conv=fsync || true
+        wipefs -a /dev/sda4
+        sgdisk --delete=4 /dev/sda
+        partprobe /dev/sda
+
+    - name: Nới sda3 ra phần trống vừa giải phóng
+      ansible.builtin.command: growpart /dev/sda 3
+      register: gp
+      changed_when: gp.rc == 0
+      failed_when: gp.rc not in [0, 1]   # 1 = NOCHANGE
+
+    - name: Nới PV và LV root (kèm filesystem)
+      ansible.builtin.shell: |
+        set -e
+        pvresize /dev/sda3
+        lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv || true
+
+# Dọn dấu vết Windows trong ESP + mục khởi động UEFI cũ
+- name: Xoá mục khởi động UEFI của Windows và bộ cài
+  ansible.builtin.shell: |
+    for n in $(efibootmgr | awk '/Windows Boot Manager|HP-LAB Installer/ {print substr($1,5,4)}'); do
+      efibootmgr -q -b "$n" -B && echo "đã xoá Boot$n"
+    done
+  register: efi
+  changed_when: efi.stdout != ''
+
+- name: Xoá file khởi động Windows trong ESP
+  ansible.builtin.file:
+    path: /boot/efi/EFI/Microsoft
+    state: absent

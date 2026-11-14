@@ -1,0 +1,33 @@
+#!/bin/bash
+# lab — menu công cụ TUI trên hp-lab (quản lý bởi hp-lab Ansible, role tui)
+items=(
+  "📊 btop      — biểu đồ CPU/RAM/mạng realtime   (thoát: q)"
+  "📁 mc        — duyệt file 2 khung               (thoát: F10)"
+  "💾 gdu       — thư mục nào nặng nhất            (thoát: q)"
+  "🌐 gping     — biểu đồ ping Internet/router     (thoát: q)"
+  "🌐 trip      — đường đi mạng tới google.com     (thoát: q)"
+  "🌐 nethogs   — app nào dùng băng thông (sudo)   (thoát: q)"
+  "📜 lnav      — xem log hệ thống                 (thoát: q)"
+  "🌡  sensors   — nhiệt độ CPU"
+  "🔆 brightness — độ sáng màn hình HP (sudo)"
+  "🖥  fastfetch — thông tin máy"
+  "🚪 Thoát"
+)
+pause() { read -rsn1 -p "Bấm phím bất kỳ để quay lại menu..."; }
+while true; do
+  clear
+  pick=$(gum choose --header "hp-lab — chọn bằng ↑↓, Enter để mở" "${items[@]}") || break
+  case "$pick" in
+    *btop*)       btop ;;
+    *" mc "*)     mc ;;
+    *gdu*)        gdu ~ ;;
+    *gping*)      gping 1.1.1.1 8.8.8.8 192.168.1.1 ;;
+    *trip*)       trip google.com ;;
+    *nethogs*)    sudo nethogs ;;
+    *lnav*)       lnav /var/log/syslog ;;
+    *sensors*)    sensors coretemp-isa-0000 2>/dev/null || sensors; pause ;;
+    *brightness*) brightness; b=$(gum choose --header "Đặt độ sáng" 0 10 30 60 100) && brightness "$b"; pause ;;
+    *fastfetch*)  fastfetch; pause ;;
+    *)            break ;;
+  esac
+done

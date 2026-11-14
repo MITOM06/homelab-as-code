@@ -1,0 +1,4 @@
+# Kiểm tra cú pháp TRƯỚC khi restart: cấu hình sai mà restart = tự khoá mình ngoài cửa
+- name: Check and restart ssh
+  ansible.builtin.shell: sshd -t && systemctl restart ssh
+  changed_when: true

@@ -1,0 +1,30 @@
+# Thử "rút dây LAN" mà không cần chạm vào máy: tắt cổng LAN 60 giây rồi TỰ bật lại.
+# Trong 60 giây đó Mac phải còn ping được HP qua Tailscale → HP sống được chỉ bằng WiFi.
+# Dù WiFi hỏng, sau 60 giây cổng LAN tự lên lại → không mất đường vào máy.
+#   ansible-playbook wifi-failover-test.yml --ask-become-pass
+- name: Thử WiFi khi không có dây LAN
+  hosts: hp-lab
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Tắt cổng LAN 60 giây (chạy nền, tự bật lại)
+      ansible.builtin.shell: nohup sh -c 'ip link set enp0s25 down; sleep 60; ip link set enp0s25 up' >/dev/null 2>&1 &
+
+    - name: Từ Mac ping HP qua Tailscale trong lúc LAN tắt
+      delegate_to: localhost
+      become: false
+      ansible.builtin.shell: |
+        sleep 15
+        ok=0
+        for i in $(seq 1 8); do
+          /Applications/Tailscale.app/Contents/MacOS/Tailscale ping -c 1 --timeout 4s hp-lab >/dev/null 2>&1 && ok=$((ok+1))
+          sleep 3
+        done
+        echo "Tailscale ping thành công $ok/8 lần khi KHÔNG có dây LAN"
+        [ $ok -ge 6 ]
+      register: ping_test
+      changed_when: false
+
+    - name: Kết quả
+      ansible.builtin.debug:
+        msg: "{{ ping_test.stdout }} → {{ 'RÚT DÂY LAN ĐƯỢC' if ping_test.rc == 0 else 'CHƯA ĐƯỢC, giữ dây LAN' }}"

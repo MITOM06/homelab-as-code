@@ -1,0 +1,101 @@
+#cloud-config
+# Ubuntu Server 26.04.1 — autoinstall cho HP EliteBook 840 G1 (máy lab).
+# Đây là TEMPLATE: các giá trị __XXX__ được scripts/build-iso.sh thay bằng secrets/ + state/ lúc build.
+# Cài KHÔNG cần USB: bộ cài chạy từ phân vùng HPLABINST (sda4) nằm ngay trên SSD của HP
+# (tạo bởi scripts/hp/prepare-installer-partition.ps1). Phân vùng này chứa auth key Tailscale
+# + mật khẩu WiFi → Ansible role cleanup xoá nó sau khi cài.
+autoinstall:
+  version: 1
+
+  locale: en_US.UTF-8
+  keyboard: {layout: us}
+  timezone: Asia/Ho_Chi_Minh
+
+  early-commands:
+    # 1) Cho Mac Air SSH vào bộ cài (root, chỉ nhận key) để theo dõi / cứu hộ từ xa,
+    #    qua WiFi hoặc dây USB-C nối thẳng Mac (cdc_ncm, IPv6 link-local).
+    - mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo "__SSH_PUBKEY__" >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
+    - systemctl start ssh || true
+    # 2) Chặn an toàn: đúng ổ KINGMAX, sda4 là HPLABINST, offset khớp state/hp-disk-layout.json.
+    #    Sai bất kỳ điều gì → lệnh lỗi → bộ cài dừng TRƯỚC khi đụng ổ, Windows còn nguyên.
+    - grep -qi kingmax /sys/block/sda/device/model
+    - test "$(blkid -L HPLABINST)" = /dev/sda4
+    - test "$(cat /sys/block/sda/sda1/start)" -eq $((__ESP_OFFSET__ / 512))
+    - test "$(cat /sys/block/sda/sda4/start)" -eq $((__INST_OFFSET__ / 512))
+    - test "$(cat /sys/block/sda/sda4/size)" -eq $((__INST_SIZE__ / 512))
+    # Chỉ cài khi sda2 vẫn là C: (NTFS) của Windows: lỡ boot lại vào HPLABINST sau khi đã có
+    # Ubuntu thì dừng, không xoá máy lần 2.
+    - test "$(blkid -s TYPE -o value /dev/sda2)" = ntfs
+    # 3) Xoá C: (sda2) + D: (sda3) của Windows. Subiquity luôn chuyển storage sang curtin
+    #    "version: 1" (đã kiểm 2026-10-18), mà v1 KHÔNG tự xoá phân vùng không khai báo →
+    #    phải xoá trước khi bộ cài quét ổ. Chỉ chạy khi mọi kiểm tra ở trên đã qua.
+    - sgdisk --delete=2 --delete=3 /dev/sda
+    - partprobe /dev/sda || partx -d --nr 2:3 /dev/sda
+    - udevadm settle && test ! -e /dev/sda2 && test ! -e /dev/sda3
+
+  # Mạng lúc cài + lần boot đầu: CHỈ dây LAN (en* — enp0s25 Intel e1000e).
+  # KHÔNG khai báo WiFi ở đây (bài học 2026-10-18):
+  #   - networkd không cho wifis dùng match:, chỉ nhận đúng tên card → netplan apply lỗi, bộ cài dừng;
+  #   - USB WiFi RTL8188EUS (0bda:8179) thiếu firmware trong bộ cài → không tạo card mạng.
+  # WiFi cấu hình sau bằng Ansible (role wifi: linux-firmware + wpasupplicant + tên card wlx…).
+  network:
+    version: 2
+    ethernets:
+      any-eth:
+        match: {name: "en*"}
+        dhcp4: true
+        optional: true
+
+  # storage: subiquity chuyển sang curtin version 1 (offset bị bỏ qua, phân vùng nối tiếp nhau;
+  # C:/D: đã bị early-commands xoá). Offset/size tính bằng byte,
+  # lấy chính xác từ Windows lúc build. Không mã hoá — cúp điện có điện lại tự boot.
+  #   sda1  ESP 100MB      giữ nguyên (dùng chung, cài GRUB vào đây)
+  #   sda2  /boot 2GB      mới
+  #   sda3  LVM PV         mới — phần còn lại trước sda4
+  #   sda4  HPLABINST      giữ nguyên trong lúc cài (đang chạy bộ cài từ đây), Ansible xoá sau
+  storage:
+    version: 2
+    config:
+      - {type: disk, id: disk0, path: /dev/sda, ptable: gpt, preserve: true}
+      - {type: partition, id: p-esp, device: disk0, number: 1, offset: __ESP_OFFSET__, size: __ESP_SIZE__, flag: boot, preserve: true, grub_device: true}
+      - {type: partition, id: p-boot, device: disk0, number: 2, offset: __BOOT_OFFSET__, size: __BOOT_SIZE__, preserve: false}
+      - {type: partition, id: p-pv, device: disk0, number: 3, offset: __PV_OFFSET__, size: __PV_SIZE__, preserve: false}
+      - {type: partition, id: p-inst, device: disk0, number: 4, offset: __INST_OFFSET__, size: __INST_SIZE__, preserve: true}
+      - {type: format, id: f-esp, volume: p-esp, fstype: fat32, preserve: true}
+      - {type: format, id: f-boot, volume: p-boot, fstype: ext4, preserve: false}
+      - {type: lvm_volgroup, id: vg0, name: ubuntu-vg, devices: [p-pv], preserve: false}
+      - {type: lvm_partition, id: lv-root, volgroup: vg0, name: ubuntu-lv, preserve: false}
+      - {type: format, id: f-root, volume: lv-root, fstype: ext4, preserve: false}
+      - {type: mount, id: m-root, device: f-root, path: /}
+      - {type: mount, id: m-boot, device: f-boot, path: /boot}
+      - {type: mount, id: m-esp, device: f-esp, path: /boot/efi}
+
+  identity:
+    hostname: hp-lab
+    username: __USERNAME__
+    realname: Lab
+    password: "__PASSWORD_HASH__"   # chỉ dùng cho sudo / đăng nhập tại máy; SSH chỉ nhận key
+
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys:
+      - "__SSH_PUBKEY__"
+
+  updates: security
+  snaps: []
+  # Không khai báo packages: cài offline vẫn thành công. Gói cần dùng do Ansible role base cài.
+
+  late-commands:
+    # Gập màn hình không sleep (laptop làm lab, có thể đóng nắp khi đang chạy)
+    - mkdir -p /target/etc/systemd/logind.conf.d
+    - printf '[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\n' > /target/etc/systemd/logind.conf.d/10-lid.conf
+
+  # Chạy 1 lần ở lần boot đầu tiên (cloud-init): cài Tailscale + join tailnet với tag:lab.
+  # Không có mạng lúc này thì bỏ qua — Ansible (qua dây USB) cài lại sau.
+  user-data:
+    runcmd:
+      - curl -fsSL https://tailscale.com/install.sh | sh && tailscale up --auth-key="__TS_AUTHKEY__" --hostname=hp-lab
+      - shred -u /var/lib/cloud/instance/user-data.txt || true   # xoá bản user-data có auth key
+
+  shutdown: reboot

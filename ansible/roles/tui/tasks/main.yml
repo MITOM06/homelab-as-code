@@ -1,0 +1,29 @@
+# Công cụ terminal "có chart", dễ dùng hơn dòng lệnh trơn + menu `lab`.
+# Không cấu hình starship / eza --icons: cần Nerd Font, Terminal.app trên Mac không có → hiện ô vuông.
+- name: Cài công cụ TUI
+  ansible.builtin.apt:
+    name: [btop, mc, gdu, gping, trippy, nethogs, lnav, gum, fastfetch, eza, bat]
+    state: present
+
+- name: Menu lab
+  ansible.builtin.copy:
+    src: lab
+    dest: /usr/local/bin/lab
+    mode: "0755"
+
+# Bản nháp cũ nằm trước /usr/local/bin trong PATH → phải xoá, không thì nó che bản mới
+- name: Xoá bản nháp menu lab trong thư mục user
+  ansible.builtin.file:
+    path: "/home/{{ lab_user }}/.local/bin/lab"
+    state: absent
+
+- name: Alias + khung thông tin máy khi SSH vào
+  ansible.builtin.blockinfile:
+    path: "/home/{{ lab_user }}/.bashrc"
+    marker: "# {mark} hp-lab Ansible (role tui)"
+    block: |
+      alias bat='batcat'
+      alias ll='eza -la --git --group-directories-first'
+      alias lt='eza --tree --level=2'
+      # Khung fastfetch chỉ hiện ở phiên SSH đầu tiên (không lặp lại trong tmux / shell con)
+      [[ $- == *i* && -n $SSH_TTY && -z $TMUX && $SHLVL -le 1 ]] && fastfetch && echo "  Gõ lab để mở menu công cụ"
